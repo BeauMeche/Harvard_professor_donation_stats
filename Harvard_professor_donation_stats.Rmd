@@ -1,0 +1,124 @@
+---
+title: "Harvard Professor Political Donations"
+author: "Beau Meche"
+date: "April 9, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+#choose your toolbox wisely as to always be prepared
+library(tidyverse)
+library(readr)
+library(janitor)
+library(gt)
+library(fs)
+library(lubridate)
+```
+
+```{r echo=FALSE, message=FALSE, cache=TRUE}
+#download the file remotely so I don't have to update the link
+download.file(url = "https://www.fec.gov/files/bulk-downloads/2006/weball06.zip",
+              # name the file for retrieval
+              destfile = "weball06.zip", 
+              mode = "wb")
+
+# assign the read file to something to avoid typing too much
+x <- read_delim("weball06.zip", delim = "|", col_names = FALSE) %>%
+  
+  #transmute the cols that we need and assign the relevant names
+  #col references are tricky and are found in the data explanation 
+  # on the download website
+  transmute(cand_id = X1,
+            cand_name = X2, 
+            party = X5, 
+            cash = X11,
+            cand_state = X19
+            )
+
+#delete file for memory and ease of running this file later
+file_delete("weball06.zip")
+
+```
+
+
+
+```{r echo=FALSE, message=FALSE, cache=TRUE}
+# download the dataset file
+download.file(url = "https://www.fec.gov/files/bulk-downloads/2006/cm06.zip",
+              # name the file for retrieval 
+              destfile = "cm06.zip", 
+              mode = "wb")
+# read the file and assign it for later use without a full reload
+w <- read_delim("cm06.zip", delim = "|", col_names = FALSE, escape_double = TRUE) %>%
+  # select and name the relevant columns (again, names found in the data set explanation webpage)
+  transmute(cand_id = X15,
+            cmte_id = X1,
+            cmte_party = X11)
+#delete file for memory and ease of running this file later
+file_delete("cm06.zip")
+```
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, cache=TRUE}
+download.file(url = "https://www.fec.gov/files/bulk-downloads/2006/indiv06.zip",
+              destfile = "indiv06.zip", 
+              mode = "wb")
+# read the file and assign it for later use without a full reload
+blend <- read_delim("indiv06.zip", delim = "|", col_names = FALSE, escape_double = FALSE, guess_max = 10000)
+
+#delete file for memory and ease of running this file later
+file_delete("indiv06.zip")
+```
+
+```{r echo=FALSE, message=FALSE, cache=FALSE}
+#create the dataframe needed for the 4th question
+# select and name the desired columns fromm our 'raw' data
+blend1 <- blend %>%
+  transmute(cmte_id = X1,
+            date = X14,
+            amount = X15, 
+            employer = X12, 
+            occupation = X13)
+
+  # join the 3rd dataset to the second
+  merged <- left_join(w, blend1, by = "cmte_id")
+  # join the resulting dataset to the first, now we have the data needed for the 4th question
+  join2 <- left_join(merged, x, by = "cand_id")
+  
+  # store the data for the next question via Rpubs
+  write_rds(join2, "Join2.rds")
+```
+
+```{r echo=FALSE, cache=FALSE}
+  join2 %>%
+    # create employers column with a normally capitalized formatting
+    mutate(employer = str_to_title(employer)) %>%
+    # look at only harvard professors
+    filter(employer == "Harvard University",
+           str_detect(occupation, "PROFESSOR"),
+           # party must be defined
+           !is.na(party)) %>%
+    # only want donors
+    filter(amount > 0) %>%
+    # cut out data that isnt needed
+    select(date, party) %>%
+    # condense the redundant party names
+    mutate(party = case_when(party %in% c("REP", "rep", "Rep") ~ "Republican", 
+                             party %in% c("DEM", "Dem", "dem") ~ "Democrat")) %>%
+    # format the dates into a usable form
+    mutate(date = parse_date(date, format = "%m %d %Y")) %>%
+    # turn date entries into yearly quarters
+    mutate(date = cut(date, breaks = "quarters")) %>% 
+    group_by(date, party) %>%
+    # count number of donations regardless of value
+    summarize(donations = n()) %>%
+    # flip the tibble value dimensions for the variables in question
+    spread(party, donations, fill = 0) %>%
+    ungroup() %>%
+    # create table and label acccordingly
+    gt() %>%
+    cols_label(date = "Qtr. Date") %>%
+    tab_header("Harvard Professors' Donation Count by Party") %>%
+    tab_source_note("Source data courtesy of the FEC")
+```
